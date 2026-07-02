@@ -138,9 +138,15 @@ def _annual_series(gaap: dict, tags: list[str], keep: Callable[[dict], bool]) ->
         fact = gaap.get(tag)
         if not fact:
             continue
-        for unit_rows in fact.get("units", {}).values():
-            rows = [r for r in unit_rows if keep(r)]
-            merged.update(_dedupe_by_end(rows))
+        units = fact.get("units", {})
+        # A dual-currency filer reports the same concept in several units;
+        # merging them would mix currencies. Take USD when present, otherwise
+        # the single unit the filer uses.
+        unit_key = "USD" if "USD" in units else next(iter(units), None)
+        if unit_key is None:
+            continue
+        rows = [r for r in units[unit_key] if keep(r)]
+        merged.update(_dedupe_by_end(rows))
     return merged
 
 
@@ -160,9 +166,15 @@ def annual_financials(facts: dict, years: int = 10) -> pd.DataFrame:
 
     Index: fiscal year end date. Values in USD. Missing tags -> NaN columns.
     """
-    gaap = facts.get("facts", {}).get("us-gaap", {})
+    all_facts = facts.get("facts", {})
+    gaap = all_facts.get("us-gaap", {})
     if not gaap:
-        raise ValueError("No us-gaap facts in this filing history")
+        if "ifrs-full" in all_facts:
+            raise ValueError(
+                "this company files under IFRS (20-F), not US GAAP — IFRS concept "
+                "mapping isn't supported yet"
+            )
+        raise ValueError("no us-gaap facts in this filing history")
 
     columns: dict[str, dict[dt.date, float]] = {}
     for name, tags in DURATION_TAGS.items():

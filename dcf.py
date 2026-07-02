@@ -73,7 +73,7 @@ def run_dcf(financials: pd.DataFrame, shares: float, a: DCFAssumptions) -> DCFRe
         smoothed = float(fcf_hist.tail(2).mean())
         # Smooth a one-year spike/dip: base off the 2-year average when the
         # latest year deviates from it by more than 25%.
-        if abs(base_fcf - smoothed) / abs(smoothed) > 0.25:
+        if smoothed != 0 and abs(base_fcf - smoothed) / abs(smoothed) > 0.25:
             warnings.append(
                 f"Latest FCF (${base_fcf/1e9:,.1f}B) deviates >25% from the 2-year "
                 f"average (${smoothed/1e9:,.1f}B); using the average as the base."

@@ -68,9 +68,10 @@ def fig_revenue_income(df: pd.DataFrame) -> go.Figure:
     # Grouped bars sit either side of the year tick — offset each label to its
     # own bar so neither collides with the taller neighbor.
     for col, color, xshift in (("revenue", S1_BLUE, -18), ("net_income", "#12805a", 18)):
-        val = df[col].dropna()
-        if not val.empty:
-            fig.add_annotation(x=years.iloc[-1], y=val.iloc[-1], text=_usd_b(val.iloc[-1]),
+        idx = df[col].last_valid_index()
+        if idx is not None:
+            fig.add_annotation(x=df.loc[idx, "fiscal_year"], y=df.loc[idx, col],
+                               text=_usd_b(df.loc[idx, col]),
                                yshift=12, xshift=xshift, showarrow=False,
                                font=dict(size=11, color=color), xanchor="center")
     fig.update_layout(bargap=0.35, bargroupgap=0.12)
@@ -86,6 +87,7 @@ def fig_margins(df: pd.DataFrame) -> go.Figure:
         ("Net margin", df["net_income"] / df["revenue"], S3_YELLOW),
     ]
     fig = go.Figure()
+    labels: list[tuple[float, str, str, int]] = []  # (y, text, color, fiscal_year)
     for name, vals, color in series:
         pct = vals * 100
         if pct.dropna().empty:
@@ -93,9 +95,20 @@ def fig_margins(df: pd.DataFrame) -> go.Figure:
         fig.add_scatter(x=years, y=pct, name=name, mode="lines",
                         line=dict(color=color, width=2),
                         hovertemplate=name + " %{y:.1f}%<extra></extra>")
-        last = pct.dropna()
-        fig.add_annotation(x=years.iloc[-1], y=last.iloc[-1], text=f"{last.iloc[-1]:.0f}%",
-                           xshift=18, showarrow=False, font=dict(size=11, color=color))
+        idx = pct.last_valid_index()
+        labels.append((float(pct.loc[idx]), f"{pct.loc[idx]:.0f}%", color,
+                       int(df.loc[idx, "fiscal_year"])))
+    # Dodge end-labels that land on top of each other (e.g. two margins both
+    # ending at 11%): nudge later labels down in 12px steps when too close.
+    labels.sort(key=lambda t: -t[0])
+    prev_y, bump = None, 0
+    span = max(v[0] for v in labels) - min(v[0] for v in labels) if labels else 0
+    min_gap = max(span * 0.06, 1.0)
+    for y_val, text, color, fy in labels:
+        bump = bump + 14 if prev_y is not None and (prev_y - y_val) < min_gap else 0
+        fig.add_annotation(x=fy, y=y_val, text=text, xshift=18, yshift=-bump,
+                           showarrow=False, font=dict(size=11, color=color))
+        prev_y = y_val
     return _base_layout(fig, ylabel="% of revenue")
 
 
@@ -116,10 +129,10 @@ def fig_ratio_panels(df: pd.DataFrame) -> go.Figure:
         fig.add_scatter(x=years, y=vals, mode="lines", line=dict(color=S1_BLUE, width=2),
                         showlegend=False, row=row, col=col,
                         hovertemplate=name + " %{y:.2f}" + suffix + "<extra></extra>")
-        last = vals.dropna()
-        if not last.empty:
-            fig.add_annotation(x=years.iloc[-1], y=last.iloc[-1],
-                               text=f"{last.iloc[-1]:.1f}{suffix}", xshift=16, showarrow=False,
+        idx = vals.last_valid_index()
+        if idx is not None:
+            fig.add_annotation(x=df.loc[idx, "fiscal_year"], y=vals.loc[idx],
+                               text=f"{vals.loc[idx]:.1f}{suffix}", xshift=16, showarrow=False,
                                font=dict(size=11, color=S1_BLUE), row=row, col=col)
     fig.update_annotations(font=dict(size=13, color=INK_2))
     _base_layout(fig, height=480)
@@ -172,8 +185,14 @@ def fig_sensitivity(grid: pd.DataFrame, market_price: float | None) -> go.Figure
         textfont=dict(size=12, family=FONT),
         colorscale=colorscale, zmin=zmin, zmax=zmax,
         xgap=2, ygap=2, hovertemplate="WACC %{y} · growth %{x}: %{text}<extra></extra>",
-        colorbar=dict(tickprefix="$", outlinewidth=0, thickness=12, tickfont=dict(color=MUTED)),
+        colorbar=dict(title=dict(text="$/share", font=dict(size=11, color=MUTED)),
+                      tickprefix="$", outlinewidth=0, thickness=12, tickfont=dict(color=MUTED)),
     ))
+    # The grid is a linspace centered on the user's assumptions, so the center
+    # cell IS the base case — outline it so readers can anchor themselves.
+    ci, cj = len(grid.index) // 2, len(grid.columns) // 2
+    fig.add_shape(type="rect", x0=cj - 0.5, x1=cj + 0.5, y0=ci - 0.5, y1=ci + 0.5,
+                  line=dict(color=INK, width=2))
     _base_layout(fig, height=380)
     fig.update_layout(hovermode="closest")
     # type="category" keeps the "8.0%" tick labels verbatim — otherwise Plotly
